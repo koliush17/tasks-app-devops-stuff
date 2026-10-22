@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    types: [closed]
+    branches: 
+      - main
 
 jobs:
   run_tests:
@@ -20,6 +24,16 @@ jobs:
           python-version: ${{matrix.python-version}}
       - run: pip install -r services/${{matrix.service}}/requirements.txt
       - run: pytest -rA services/${{matrix.service}} > ${{matrix.service}}-${{matrix.python-version}}-test-report.txt
+      - name: Generate docs
+        if: matrix.service == 'tasks-api' && matrix.python-version == '3.12'
+        run: pdoc --html --output-dir docs app
+        working-directory: services/tasks-api
+      - name: Upload docs as artifact
+        if: matrix.service == 'tasks-api' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tasks-api-docs
+          path: services/tasks-api/docs/app
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -36,6 +50,7 @@ jobs:
 
   deploy:
     needs: run_tests
+    if: github.pull_request.merged == true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -49,6 +64,10 @@ jobs:
           name: tasks-api-3.12-bandit-report
           path: _site
       - run: mv _site/tasks-api-3.12-bandit-report.html _site/index.html
+      - uses: actions/download-artifact@v7
+        with:
+          name: tasks-api-docs
+          path: _site/docs
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
