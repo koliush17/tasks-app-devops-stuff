@@ -5,8 +5,8 @@ on:
     branches:
       - main
   pull_request:
-    types: [closed]
-    branches: 
+    types: [opened, synchronize, closed]
+    branches:
       - main
 
 jobs:
@@ -24,16 +24,6 @@ jobs:
           python-version: ${{matrix.python-version}}
       - run: pip install -r services/${{matrix.service}}/requirements.txt
       - run: pytest -rA services/${{matrix.service}} > ${{matrix.service}}-${{matrix.python-version}}-test-report.txt
-      - name: Generate docs
-        if: matrix.service == 'tasks-api' && matrix.python-version == '3.12'
-        run: pdoc --html --output-dir docs app
-        working-directory: services/tasks-api
-      - name: Upload docs as artifact
-        if: matrix.service == 'tasks-api' && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tasks-api-docs
-          path: services/tasks-api/docs/app
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -48,29 +38,63 @@ jobs:
           name: ${{matrix.service}}-${{matrix.python-version}}-bandit-report
           path: ${{matrix.service}}-${{matrix.python-version}}-bandit-report.html
 
-  deploy:
-    needs: run_tests
-    if: github.pull_request.merged == true
+  generate_api_docs:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${( steps.deployment.outputs.page_url )}
+    strategy:
+      matrix:
+        service: [tasks-api, title-normalizer] # ${{matrix.service}}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/${{matrix.service}}/requirements.txt
+      - run: pip install pdoc
+      - run: pdoc app -o apidocs
+        working-directory: services/${{matrix.service}}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{matrix.service}}-api-docs
+          path: services/${{matrix.service}}/apidocs
+
+  deploy:
+    needs: [run_tests, generate_api_docs]
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v7 
-        with: 
+      - uses: actions/download-artifact@v8
+        with:
           name: tasks-api-3.12-bandit-report
           path: _site
-      - run: mv _site/tasks-api-3.12-bandit-report.html _site/index.html
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
-          name: tasks-api-docs
-          path: _site/docs
+          name: title-normalizer-3.12-bandit-report
+          path: _site
+      - uses: actions/download-artifact@v8
+        with:
+          name: tasks-api-api-docs
+          path: _site/tasks-api-apidocs
+      - uses: actions/download-artifact@v8
+        with:
+          name: title-normalizer-api-docs
+          path: _site/title-normalizer-apidocs
+      - run: |
+          cat > _site/index.html <<'EOF'
+          <h1>Bandit reports</h1>
+          <p><a href="tasks-api-3.12-bandit-report.html">tasks-api</a></p>
+          <p><a href="title-normalizer-3.12-bandit-report.html">title-normalizer</a></p>
+          <h1>API docs</h1>
+          <p><a href="tasks-api-apidocs/index.html">tasks-api</a></p>
+          <p><a href="title-normalizer-apidocs/index.html">title-normalizer</a></p>
+          EOF
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
-          retention-days: 2
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
